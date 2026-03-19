@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tasks MVP</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans">
+    <div id="app" class="min-h-screen py-10 px-4">
+        <div class="max-w-3xl mx-auto space-y-8">
+            <header class="text-center">
+                <h1 class="text-4xl font-extrabold tracking-tight text-slate-900 mb-2">
+                    Tasks <span class="text-blue-600">MVP</span>
+                </h1>
+                <p class="text-slate-500">Manage your daily workflow effectively.</p>
+            </header>
+
+            <div v-if="error" class="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start space-x-3 text-red-700">
+                <div class="mt-0.5"><icon-alert></icon-alert></div>
+                <p class="text-sm">{{ error }}</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <form @submit.prevent="handleAddTask" class="space-y-4">
+                    <div>
+                        <input
+                            type="text"
+                            placeholder="What needs to be done?"
+                            v-model="newTaskTitle"
+                            class="w-full text-lg border-0 bg-slate-50 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400"
+                            :disabled="isSubmitting"
+                            required
+                        />
+                    </div>
+                    <div class="flex gap-3">
+                        <input
+                            type="text"
+                            placeholder="Details (Optional)"
+                            v-model="newTaskDesc"
+                            class="flex-1 text-sm border-0 bg-slate-50 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400"
+                            :disabled="isSubmitting"
+                        />
+                        <button
+                            type="submit"
+                            :disabled="!newTaskTitle.trim() || isSubmitting"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <icon-plus></icon-plus>
+                            <span class="hidden sm:inline">Add Task</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="flex justify-center gap-2">
+                <button
+                    v-for="f in ['all', 'active', 'completed']"
+                    :key="f"
+                    @click="filter = f"
+                    class="px-4 py-2 rounded-full text-sm font-medium transition-colors capitalize"
+                    :class="filter === f ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-200'"
+                >
+                    {{ f }}
+                </button>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden min-h-[200px]">
+                <div v-if="loading" class="flex flex-col items-center justify-center p-12 text-slate-400">
+                    <p>Loading tasks...</p>
+                </div>
+                <div v-else-if="filteredTasks.length === 0" class="text-center p-12 text-slate-500">
+                    <p class="text-lg font-medium">No tasks found.</p>
+                    <p class="text-sm mt-1">You're all caught up!</p>
+                </div>
+                <ul v-else class="divide-y divide-slate-100">
+                    <li v-for="task in filteredTasks" :key="task.id" class="p-4 sm:p-5 hover:bg-slate-50 transition-colors flex items-start gap-4 group">
+                        <button
+                            @click="toggleTask(task)"
+                            class="mt-1 flex-shrink-0 transition-colors"
+                            :class="task.isCompleted ? 'text-green-500 hover:text-green-600' : 'text-slate-300 hover:text-blue-500'"
+                        >
+                            <icon-check v-if="task.isCompleted"></icon-check>
+                            <icon-circle v-else></icon-circle>
+                        </button>
+                        
+                        <div class="flex-1 min-w-0">
+                            <p class="text-base font-medium truncate transition-all"
+                               :class="task.isCompleted ? 'text-slate-400 line-through' : 'text-slate-800'">
+                                {{ task.title }}
+                            </p>
+                            <p v-if="task.description" class="text-sm mt-1 line-clamp-2"
+                               :class="task.isCompleted ? 'text-slate-300 line-through' : 'text-slate-500'">
+                                {{ task.description }}
+                            </p>
+                        </div>
+
+                        <button
+                            @click="deleteTask(task.id)"
+                            class="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2 rounded-lg hover:bg-red-50 focus:opacity-100"
+                            title="Delete task"
+                        >
+                            <icon-trash></icon-trash>
+                        </button>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        const API_BASE_URL = '/api/tasks';
+
+        // --- Inline SVG Icons as Vue Components ---
+        const IconAlert = { template: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>` };
+        const IconCheck = { template: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>` };
+        const IconCircle = { template: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>` };
+        const IconTrash = { template: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>` };
+        const IconPlus = { template: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>` };
+
+        const App = {
+            setup() {
+                const tasks = ref([]);
+                const loading = ref(true);
+                const error = ref(null);
+                const filter = ref('all'); 
+                const newTaskTitle = ref('');
+                const newTaskDesc = ref('');
+                const isSubmitting = ref(false);
+
+                const fetchTasks = async () => {
+                    try {
+                        loading.value = true;
+                        error.value = null;
+                        const response = await fetch(API_BASE_URL);
+                        if (!response.ok) throw new Error('Failed to fetch tasks');
+                        tasks.value = await response.json();
+                    } catch (err) {
+                        error.value = "Cannot load tasks. Ensure the .NET API endpoints are functioning.";
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    fetchTasks();
+                });
+
+                const handleAddTask = async () => {
+                    if (!newTaskTitle.value.trim()) return;
+
+                    try {
+                        isSubmitting.value = true;
+                        const response = await fetch(API_BASE_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                title: newTaskTitle.value.trim(),
+                                description: newTaskDesc.value.trim()
+                            })
+                        });
+
+                        if (!response.ok) throw new Error('Failed to create task');
+                        const createdTask = await response.json();
+                        tasks.value.unshift(createdTask); // Add to beginning of array
+                        newTaskTitle.value = '';
+                        newTaskDesc.value = '';
+                    } catch (err) {
+                        alert("Error adding task.");
+                    } finally {
+                        isSubmitting.value = false;
+                    }
+                };
+
+                const toggleTask = async (task) => {
+                    const originalStatus = task.isCompleted;
+                    task.isCompleted = !originalStatus; // Optimistic update
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/${task.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(task)
+                        });
+                        if (!response.ok) throw new Error('Failed to update task');
+                    } catch (err) {
+                        task.isCompleted = originalStatus; // Revert on error
+                        alert("Error updating task.");
+                    }
+                };
+
+                const deleteTask = async (id) => {
+                    const previousTasks = [...tasks.value];
+                    tasks.value = tasks.value.filter(t => t.id !== id); // Optimistic update
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/${id}`, {
+                            method: 'DELETE'
+                        });
+                        if (!response.ok) throw new Error('Failed to delete task');
+                    } catch (err) {
+                        tasks.value = previousTasks; // Revert on error
+                        alert("Error deleting task.");
+                    }
+                };
+
+                const filteredTasks = computed(() => {
+                    if (filter.value === 'active') return tasks.value.filter(task => !task.isCompleted);
+                    if (filter.value === 'completed') return tasks.value.filter(task => task.isCompleted);
+                    return tasks.value;
+                });
+
+                return {
+                    tasks, loading, error, filter, newTaskTitle, newTaskDesc, isSubmitting,
+                    handleAddTask, toggleTask, deleteTask, filteredTasks
+                };
+            }
+        };
+
+        const app = createApp(App);
+        
+        // Register Icon Components
+        app.component('icon-alert', IconAlert);
+        app.component('icon-check', IconCheck);
+        app.component('icon-circle', IconCircle);
+        app.component('icon-trash', IconTrash);
+        app.component('icon-plus', IconPlus);
+
+        app.mount('#app');
+    </script>
+</body>
+</html>
